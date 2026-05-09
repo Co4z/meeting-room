@@ -244,7 +244,7 @@ def create_booking(payload: BookingCreate):
                 _serialize(conflict)
                 raise HTTPException(
                     status_code=409,
-                    detail=f"ห้องนี้ถูกจองแล้วในช่วง {conflict['start_datetime']} - {conflict['end_datetime']} (\"{conflict['title'']}\")"
+                    detail=("ห้องนี้ถูกจองแล้วในช่วง " + str(conflict["start_datetime"]) + " - " + str(conflict["end_datetime"]) + " (\"" + conflict["title"] + "\")")
                 )
 
             # CHECK 2: อุปกรณ์ส่วนกลางถูกจองซ้อนไหม
@@ -265,7 +265,7 @@ def create_booking(payload: BookingCreate):
                 if eq_conflict:
                     raise HTTPException(
                         status_code=409,
-                        detail=f"อุปกรณ์ '{eq_conflict['name']}' ถูกจองไปแล้วในช่วงเวลานี้"
+                        detail=("อุปกรณ์ '" + eq_conflict["name"] + "' ถูกจองไปแล้วในช่วงเวลานี้")
                     )
 
             # INSERT
