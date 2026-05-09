@@ -733,8 +733,8 @@ async function loadDashboard() {
       </div>`).join('');
 
     const colors = ['blue','green','amber','blue','green'];
-    document.getElementById('usage-bars').innerHTML = usageData.usage.map((r, i) => `
-      <div><div style="font-size:12px;font-weight:500;margin-bottom:4px;">${r.room_name}</div><div style="font-size:11px;color:var(--text3);">${r.hours_used} ชม. · ${r.booking_count} ครั้ง</div><div class="progress-bar"><div class="progress-fill ${colors[i]}" style="width:${r.usage_percent}%;"></div></div><div style="font-size:11px;color:var(--${colors[i]==='blue'?'accent2':colors[i]==='green'?'green':'amber'});margin-top:3px;">${r.usage_percent}%</div></div>`).join('');
+    document.getElementById('usage-bars').innerHTML = (usageData.rooms || []).map((r, i) => `
+      <div><div style="font-size:12px;font-weight:500;margin-bottom:4px;">${r.room_name}</div><div style="font-size:11px;color:var(--text3);">${r.total_hours} ชม. · ${r.booking_count} ครั้ง</div><div class="progress-bar"><div class="progress-fill ${colors[i % colors.length]}" style="width:${r.utilization_rate}%;"></div></div><div style="font-size:11px;color:var(--${colors[i % colors.length]==='blue'?'accent2':colors[i % colors.length]==='green'?'green':'amber'});margin-top:3px;">${r.utilization_rate}%</div></div>`).join('');
   } catch (e) { console.error(e); }
 }
 
@@ -1217,7 +1217,7 @@ async function loadReport() {
     document.getElementById('rpt-rooms').textContent = stats.total_rooms;
 
     const colors = ['blue','green','amber','blue','green'];
-    document.getElementById('report-body').innerHTML = usage.usage.map((r, i) => `<tr><td style="font-weight:500;color:var(--text);">${r.room_name}</td><td>${r.capacity} ที่นั่ง</td><td>${r.booking_count}</td><td>${r.hours_used} ชม.</td><td><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="width:80px;display:inline-block;"><div class="progress-fill ${colors[i % colors.length]}" style="width:${r.usage_percent}%;"></div></div><span style="font-size:12px;color:var(--${colors[i % colors.length]});">${r.usage_percent}%</span></div></td></tr>`).join('');
+    document.getElementById('report-body').innerHTML = (usage.rooms || []).map((r, i) => `<tr><td style="font-weight:500;color:var(--text);">${r.room_name}</td><td>${r.capacity} ที่นั่ง</td><td>${r.booking_count}</td><td>${r.total_hours} ชม.</td><td><div style="display:flex;align-items:center;gap:8px;"><div class="progress-bar" style="width:80px;display:inline-block;"><div class="progress-fill ${colors[i % colors.length]}" style="width:${r.utilization_rate}%;"></div></div><span style="font-size:12px;color:var(--${colors[i % colors.length]});">${r.utilization_rate}%</span></div></td></tr>`).join('');
   } catch (e) { console.error(e); }
 }
 
