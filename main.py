@@ -230,6 +230,45 @@ def create_booking(payload: BookingCreate):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            # CHECK 1: ห้องซ้อนเวลากับคนอื่นไหม
+            cur.execute("""
+                SELECT booking_id, title, start_datetime, end_datetime
+                FROM booking
+                WHERE room_id = %s
+                  AND status != 'cancelled'
+                  AND start_datetime < %s
+                  AND end_datetime   > %s
+            """, (payload.room_id, end_dt, start_dt))
+            conflict = cur.fetchone()
+            if conflict:
+                _serialize(conflict)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"ห้องนี้ถูกจองแล้วในช่วง {conflict['start_datetime']} - {conflict['end_datetime']} (\"{conflict['title'']}\")"
+                )
+
+            # CHECK 2: อุปกรณ์ส่วนกลางถูกจองซ้อนไหม
+            if payload.equipment_ids:
+                fmt = ','.join(['%s'] * len(payload.equipment_ids))
+                cur.execute(f"""
+                    SELECT e.name, be.equipment_id
+                    FROM booking_equipment be
+                    JOIN booking b ON be.booking_id = b.booking_id
+                    JOIN equipment e ON be.equipment_id = e.equipment_id
+                    WHERE be.equipment_id IN ({fmt})
+                      AND b.status != 'cancelled'
+                      AND b.start_datetime < %s
+                      AND b.end_datetime   > %s
+                    LIMIT 1
+                """, (*payload.equipment_ids, end_dt, start_dt))
+                eq_conflict = cur.fetchone()
+                if eq_conflict:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"อุปกรณ์ '{eq_conflict['name']}' ถูกจองไปแล้วในช่วงเวลานี้"
+                    )
+
+            # INSERT
             cur.execute(
                 "INSERT INTO booking (user_id, room_id, title, start_datetime, end_datetime, require_break, break_note, note) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (payload.user_id, payload.room_id, payload.title, start_dt, end_dt, payload.require_break, payload.break_note, payload.note)
@@ -239,6 +278,35 @@ def create_booking(payload: BookingCreate):
                 cur.execute("INSERT INTO booking_equipment (booking_id, equipment_id) VALUES (%s,%s)", (bid, eq_id))
             conn.commit()
             return {"booking_id": bid}
+    finally:
+        conn.close()
+
+@app.get("/api/bookings/available_equipment")
+def available_equipment(date: str = Query(...), start_time: str = Query(...), end_time: str = Query(...)):
+    """คืนอุปกรณ์ส่วนกลางที่ยังว่างในช่วงเวลาที่ระบุ"""
+    start_dt = datetime.strptime(f"{date} {start_time}", "%Y-%m-%d %H:%M")
+    end_dt   = datetime.strptime(f"{date} {end_time}",   "%Y-%m-%d %H:%M")
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            # หา equipment_id ที่ถูกจองซ้อนในช่วงเวลานั้น
+            cur.execute("""
+                SELECT DISTINCT be.equipment_id
+                FROM booking_equipment be
+                JOIN booking b ON be.booking_id = b.booking_id
+                WHERE b.status != 'cancelled'
+                  AND b.start_datetime < %s
+                  AND b.end_datetime   > %s
+            """, (end_dt, start_dt))
+            busy_ids = {row["equipment_id"] for row in cur.fetchall()}
+
+            # คืนเฉพาะส่วนกลางที่สถานะ available และไม่ถูกจอง
+            cur.execute("SELECT * FROM equipment WHERE is_room_fixed = FALSE AND status = 'available' ORDER BY name")
+            items = cur.fetchall()
+            for i in items:
+                _serialize(i)
+                i["is_busy"] = i["equipment_id"] in busy_ids
+            return {"equipment": items}
     finally:
         conn.close()
 
