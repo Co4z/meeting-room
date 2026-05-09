@@ -1,5 +1,5 @@
 """
-Meeting Room Booking System — FastAPI Backend (V2 Optimized)
+Meeting Room Booking System — FastAPI Backend (V3 Fully Optimized)
 """
 
 from __future__ import annotations
@@ -18,14 +18,16 @@ from pydantic import BaseModel
 from dbutils.pooled_db import PooledDB
 
 # ─────────────────────────────────────────────
-#  DATABASE CONNECTION POOL SETUP
+#  DATABASE CONNECTION POOL SETUP (เสถียรที่สุด)
 # ─────────────────────────────────────────────
 pool = PooledDB(
     creator=pymysql,
     maxconnections=10,
-    mincached=5,          # สแตนด์บายท่อไว้รอเลย 5 ท่อ จะได้ไม่ต้องทำ SSL Handshake ใหม่
+    mincached=2,
     maxcached=5,
-    ping=2,
+    maxshared=3,          # จำกัดการแชร์ท่อเพื่อความเสถียร
+    blocking=True,        # ถ้าท่อเต็ม ให้รอจนกว่าจะมีท่อว่าง (ลดอาการ Error)
+    ping=1,               # 📌 เช็คท่อทุกครั้งก่อนใช้งาน (แก้ปัญหาต้องกดซ้ำข้อมูลถึงจะขึ้น)
     host=os.environ.get('DB_HOST', 'localhost'),
     port=int(os.environ.get('DB_PORT', 4000)),
     user=os.environ.get('DB_USER', 'root'),
@@ -39,7 +41,7 @@ pool = PooledDB(
 def get_conn():
     return pool.connection()
 
-app = FastAPI(title="Meeting Room API", version="1.2.0")
+app = FastAPI(title="Meeting Room API", version="1.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,7 +79,7 @@ def _serialize(row: dict) -> dict:
     return row
 
 # ─────────────────────────────────────────────
-#  OPTIMIZED ENDPOINTS (ลดการต่อ DB หลายรอบ)
+#  OPTIMIZED ENDPOINTS
 # ─────────────────────────────────────────────
 
 @app.get("/api/rooms")
@@ -85,7 +87,6 @@ def list_rooms():
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # 🚀 ปรับเป็นคำสั่งเดียวเพื่อดึงทั้งห้องและอุปกรณ์ประจำห้องมาพร้อมกัน
             cur.execute("""
                 SELECT r.*, e.equipment_id, e.name AS eq_name, e.type AS eq_type, e.status AS eq_status
                 FROM room r
@@ -93,15 +94,12 @@ def list_rooms():
                 ORDER BY r.capacity DESC
             """)
             rows = cur.fetchall()
-            
-            # จัดกลุ่มข้อมูลอุปกรณ์เข้ากะห้อง
             rooms_dict = {}
             for row in rows:
                 rid = row["room_id"]
                 if rid not in rooms_dict:
                     rooms_dict[rid] = _serialize({k: v for k, v in row.items() if not k.startswith("eq_")})
                     rooms_dict[rid]["equipment"] = []
-                
                 if row["equipment_id"]:
                     rooms_dict[rid]["equipment"].append({
                         "id": row["equipment_id"], "name": row["eq_name"], 
@@ -115,11 +113,9 @@ def list_rooms():
 def rooms_availability(check_date: str = Query(...), start_time: str = Query("08:00"), end_time: str = Query("17:00")):
     start_dt = datetime.strptime(f"{check_date} {start_time}", "%Y-%m-%d %H:%M")
     end_dt   = datetime.strptime(f"{check_date} {end_time}",   "%Y-%m-%d %H:%M")
-    
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # 🚀 ดึงทุกอย่างในครั้งเดียว (ห้อง, การจองที่ทับซ้อน, และอุปกรณ์)
             cur.execute("""
                 SELECT r.*, b.booking_id, b.title AS b_title, b.start_datetime AS b_start, b.end_datetime AS b_end,
                        e.name AS eq_name, e.status AS eq_status
@@ -129,32 +125,50 @@ def rooms_availability(check_date: str = Query(...), start_time: str = Query("08
                 LEFT JOIN equipment e ON r.room_id = e.room_id AND e.is_room_fixed = TRUE
                 ORDER BY r.capacity DESC
             """, (end_dt, start_dt))
-            
             rows = cur.fetchall()
             rooms_map = {}
             for row in rows:
                 rid = row["room_id"]
                 if rid not in rooms_map:
                     rooms_map[rid] = _serialize({k: v for k, v in row.items() if not k.startswith("b_") and not k.startswith("eq_")})
-                    rooms_map[rid]["conflicts"] = []
-                    rooms_map[rid]["equipment"] = []
-                
+                    rooms_map[rid]["conflicts"] = []; rooms_map[rid]["equipment"] = []
                 if row["booking_id"] and not any(x["booking_id"] == row["booking_id"] for x in rooms_map[rid]["conflicts"]):
                     rooms_map[rid]["conflicts"].append(_serialize({
                         "booking_id": row["booking_id"], "title": row["b_title"], 
                         "start_datetime": row["b_start"], "end_datetime": row["b_end"]
                     }))
-                
                 if row["eq_name"] and not any(x["name"] == row["eq_name"] for x in rooms_map[rid]["equipment"]):
                     rooms_map[rid]["equipment"].append({"name": row["eq_name"], "status": row["eq_status"]})
-                
                 rooms_map[rid]["is_available"] = len(rooms_map[rid]["conflicts"]) == 0
-                
         return {"rooms": list(rooms_map.values())}
     finally:
         conn.close()
 
-# ---------- (ส่วนอื่นๆ เหมือนเดิม แต่เปลี่ยนชื่อตารางเป็นพิมพ์เล็กให้ตรงกับ TiDB) ----------
+@app.get("/api/stats/dashboard")
+def dashboard_stats():
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            # 🚀 รวมทุกสถิติไว้ในคำสั่งเดียว เพื่อลด Latency จากสิงคโปร์
+            cur.execute("""
+                SELECT 
+                    (SELECT COUNT(*) FROM room) as total_rooms,
+                    (SELECT COUNT(*) FROM booking WHERE DATE(start_datetime) = CURDATE() AND status != 'cancelled') as today_bookings,
+                    (SELECT COUNT(*) FROM booking WHERE DATE(start_datetime) >= DATE_FORMAT(NOW() ,'%Y-%m-01') AND status != 'cancelled') as month_bookings,
+                    (SELECT COUNT(DISTINCT room_id) FROM booking WHERE start_datetime <= NOW() AND end_datetime >= NOW() AND status != 'cancelled') as busy_rooms
+            """)
+            res = cur.fetchone()
+            available_now = res["total_rooms"] - res["busy_rooms"]
+            
+        return {
+            "total_rooms": res["total_rooms"], 
+            "available_now": available_now if available_now > 0 else 0, 
+            "today_bookings": res["today_bookings"], 
+            "month_bookings": res["month_bookings"]
+        }
+    finally:
+        conn.close()
+
 @app.get("/api/bookings")
 def list_bookings(user_id: Optional[int] = None, room_id: Optional[int] = None, date_from: Optional[str] = None, date_to: Optional[str] = None):
     conn = get_conn()
@@ -187,17 +201,6 @@ def create_booking(payload: BookingCreate):
                 cur.execute("INSERT INTO booking_equipment (booking_id, equipment_id) VALUES (%s,%s)", (bid, eq_id))
         conn.commit()
         return {"booking_id": bid}
-    finally:
-        conn.close()
-
-@app.get("/api/stats/dashboard")
-def dashboard_stats():
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT (SELECT COUNT(*) FROM room) AS total_rooms, (SELECT COUNT(*) FROM booking WHERE DATE(start_datetime) = CURDATE() AND status != 'cancelled') AS today_bookings")
-            res = cur.fetchone()
-        return {"total_rooms": res["total_rooms"], "available_now": 0, "today_bookings": res["today_bookings"], "month_bookings": 0}
     finally:
         conn.close()
 
