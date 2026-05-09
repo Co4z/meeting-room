@@ -5,6 +5,7 @@ Run with: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 
 from __future__ import annotations
 
+import os
 import json
 from datetime import datetime, date, timedelta
 from typing import List, Optional
@@ -16,24 +17,33 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import os
-
-DB_CONFIG = {
-    "host":     os.environ.get('DB_HOST', 'localhost'), 
-    "port":     int(os.environ.get('DB_PORT', 4000)),
-    "user":     os.environ.get('DB_USER', 'root'),
-    "password": os.environ.get('DB_PASSWORD', ''), 
-    "database": os.environ.get('DB_DATABASE', 'test'),
-    "charset":  "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
-    "ssl":      {"ssl_verify_cert": True, "ssl_verify_identity": True}
-}
-
-def get_conn():
-    return pymysql.connect(**DB_CONFIG)
+from dbutils.pooled_db import PooledDB
 
 # ─────────────────────────────────────────────
-#  APP
+#  DATABASE CONNECTION POOL SETUP
+# ─────────────────────────────────────────────
+# สร้าง Pool ทิ้งไว้ตอนเริ่มโปรแกรม เพื่อลด overhead ในการสร้าง connection ใหม่
+pool = PooledDB(
+    creator=pymysql,
+    maxconnections=5,    # จำนวนท่อที่เปิดค้างไว้สูงสุด
+    mincached=2,         # จำนวนท่อขั้นต่ำที่เตรียมไว้
+    host=os.environ.get('DB_HOST', 'localhost'),
+    port=int(os.environ.get('DB_PORT', 4000)),
+    user=os.environ.get('DB_USER', 'root'),
+    password=os.environ.get('DB_PASSWORD', ''),
+    database=os.environ.get('DB_DATABASE', 'test'),
+    charset='utf8mb4',
+    cursorclass=pymysql.cursors.DictCursor,
+    # หากต่อ database บน cloud เช่น TiDB หรือ AWS อาจต้องใช้ SSL
+    ssl={'ssl_verify_cert': True, 'ssl_verify_identity': True} if os.environ.get('DB_SSL') == 'true' else None
+)
+
+def get_conn():
+    """ดึงท่อที่มีอยู่จาก Pool มาใช้ (เมื่อสั่ง close จะเป็นการคืนท่อกลับเข้า Pool)"""
+    return pool.connection()
+
+# ─────────────────────────────────────────────
+#  APP INITIALIZATION
 # ─────────────────────────────────────────────
 app = FastAPI(title="Meeting Room Booking API", version="1.0.0")
 
@@ -65,8 +75,10 @@ class BookingCreate(BaseModel):
     attendee_emails: List[str] = []
     equipment_ids:  List[int] = []
 
-class BookingCancel(BaseModel):
-    booking_id: int
+class RoomUpdate(BaseModel):
+    room_name: Optional[str] = None
+    capacity: Optional[int] = None
+    location_floor: Optional[str] = None
 
 class EquipmentCreate(BaseModel):
     name: str
@@ -83,12 +95,6 @@ class EquipmentUpdate(BaseModel):
     is_room_fixed: Optional[bool] = None
     status: Optional[str] = None
     description: Optional[str] = None
-
-# โมเดลใหม่สำหรับแก้ไขห้องประชุม
-class RoomUpdate(BaseModel):
-    room_name: Optional[str] = None
-    capacity: Optional[int] = None
-    location_floor: Optional[str] = None
 
 # ─────────────────────────────────────────────
 #  HELPERS
@@ -153,7 +159,6 @@ def rooms_availability(check_date: str = Query(...), start_time: str = Query("08
     finally:
         conn.close()
 
-# API ใหม่สำหรับการอัปเดตข้อมูลห้องประชุม
 @app.patch("/api/rooms/{room_id}")
 def update_room(room_id: int, payload: RoomUpdate):
     conn = get_conn()
@@ -253,11 +258,9 @@ def list_bookings(user_id: Optional[int] = None, room_id: Optional[int] = None, 
             bookings = cur.fetchall()
             for bk in bookings:
                 _serialize(bk)
-                # ดึงผู้เข้าร่วม
                 cur.execute("SELECT * FROM Booking_attendee WHERE booking_id=%s", (bk["booking_id"],))
                 bk["attendees"] = cur.fetchall()
                 
-                # 👇 จุดที่เพิ่มใหม่: ดึงชื่ออุปกรณ์ส่วนกลางที่ถูกจองในคิวนี้ออกมาด้วย 👇
                 cur.execute("""
                     SELECT e.equipment_id, e.name, e.type 
                     FROM Booking_Equipment be
