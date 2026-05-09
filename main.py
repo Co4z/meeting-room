@@ -247,7 +247,7 @@ def list_equipment():
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM equipment ORDER BY name")
+            cur.execute("SELECT * FROM equipment WHERE is_room_fixed = FALSE ORDER BY name")
             items = cur.fetchall()
             for i in items: _serialize(i)
             return {"equipment": items}
