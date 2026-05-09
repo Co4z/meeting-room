@@ -247,7 +247,21 @@ def list_equipment():
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            # คืนเฉพาะอุปกรณ์ส่วนกลาง (สำหรับหน้าจองห้อง)
             cur.execute("SELECT * FROM equipment WHERE is_room_fixed = FALSE ORDER BY name")
+            items = cur.fetchall()
+            for i in items: _serialize(i)
+            return {"equipment": items}
+    finally:
+        conn.close()
+
+@app.get("/api/equipment/all")
+def list_all_equipment():
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            # คืนทุกอุปกรณ์ (ส่วนกลาง + ประจำห้อง) สำหรับหน้าจัดการ
+            cur.execute("SELECT * FROM equipment ORDER BY is_room_fixed, name")
             items = cur.fetchall()
             for i in items: _serialize(i)
             return {"equipment": items}
