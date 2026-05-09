@@ -1092,7 +1092,7 @@ async function loadEquipment() {
        });
     }
 
-    const data = await apiFetch('/api/equipment');
+    const data = await apiFetch('/api/equipment/all');
     globalEquipments = data.equipment;
     
     let filteredEq = globalEquipments;
