@@ -141,7 +141,9 @@ def rooms_availability(check_date: str = Query(...), start_time: str = Query("08
                     }))
                 if row["eq_name"] and not any(x["name"] == row["eq_name"] for x in rooms_map[rid]["equipment"]):
                     rooms_map[rid]["equipment"].append({"name": row["eq_name"], "status": row["eq_status"]})
-            rooms_map[rid]["is_available"] = len(rooms_map[rid]["conflicts"]) == 0
+            # ✅ คำนวณ is_available หลัง loop เสร็จ — ครบทุกห้อง ไม่ใช่แค่ห้องสุดท้าย
+            for room in rooms_map.values():
+                room["is_available"] = len(room["conflicts"]) == 0
             return {"rooms": list(rooms_map.values())}
     finally:
         conn.close()
