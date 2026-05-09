@@ -656,13 +656,19 @@ function showToast(msg, type = 'success') {
 // ─────────────────────────────────────────────
 async function apiFetch(path) {
   const res = await fetch(API + path);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new Error(errBody?.detail || res.statusText);
+  }
   return res.json();
 }
 
 async function apiPost(path, body) {
   const res = await fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new Error(errBody?.detail || res.statusText);
+  }
   return res.json();
 }
 
@@ -1309,42 +1315,29 @@ async function updateAvailableEquipment() {
   wrap.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:1px;"></span> <span style="color:var(--text3);font-size:12px;">กำลังตรวจสอบคิวอุปกรณ์...</span>';
 
   try {
-    const [eqRes, bkRes] = await Promise.all([
-      apiFetch('/api/equipment?shared_only=true'),
-      apiFetch(`/api/bookings?date_from=${date}&date_to=${date}`)
-    ]);
+    const eqRes = await apiFetch(`/api/bookings/available_equipment?date=${date}&start_time=${startT}&end_time=${endT}`);
+    const allEqs = eqRes.equipment;
 
-    const sharedEqs = eqRes.equipment.filter(e => e.status === 'available');
-
-    const sDt = new Date(`${date}T${startT}:00`);
-    const eDt = new Date(`${date}T${endT}:00`);
-
-    const overlappingBookings = bkRes.bookings.filter(b => {
-      if (b.status === 'cancelled') return false;
-      const bs = new Date(b.start_datetime);
-      const be = new Date(b.end_datetime);
-      return (sDt < be && eDt > bs);
-    });
-
-    let usedEqIds = new Set();
-    overlappingBookings.forEach(b => {
-      const eqs = b.equipment || b.equipments || b.equipment_ids || b.shared_equipment || [];
-      eqs.forEach(eq => {
-          if(typeof eq === 'object') {
-              usedEqIds.add(eq.equipment_id || eq.id);
-          } else {
-              usedEqIds.add(eq);
-          }
-      });
-    });
-
-    const availableEqs = sharedEqs.filter(e => !usedEqIds.has(e.equipment_id));
-
-    if (availableEqs.length === 0) {
-      wrap.innerHTML = '<span style="color:var(--amber);font-size:12px;">⚠️ อุปกรณ์ส่วนกลางถูกยืมไปเต็มหมดแล้วในช่วงเวลานี้</span>';
-    } else {
-      wrap.innerHTML = availableEqs.map(e => `<label class="check-item"><input type="checkbox" value="${e.equipment_id}" onchange="this.parentElement.classList.toggle('checked', this.checked)"> ${e.name}</label>`).join('');
+    if (allEqs.length === 0) {
+      wrap.innerHTML = '<span style="color:var(--amber);font-size:12px;">⚠️ ไม่มีอุปกรณ์ส่วนกลางในระบบ</span>';
+      return;
     }
+
+    const availCount = allEqs.filter(e => !e.is_busy).length;
+    if (availCount === 0) {
+      wrap.innerHTML = '<span style="color:var(--amber);font-size:12px;">⚠️ อุปกรณ์ส่วนกลางถูกจองไปหมดแล้วในช่วงเวลานี้</span>';
+      return;
+    }
+
+    wrap.innerHTML = allEqs.map(e => {
+      if (e.is_busy) {
+        return `<label class="check-item" style="opacity:0.45;cursor:not-allowed;" title="ถูกจองในช่วงเวลานี้แล้ว">
+          <input type="checkbox" value="${e.equipment_id}" disabled> ${e.name}
+          <span style="font-size:10px;color:var(--amber);margin-left:4px;">(ถูกจอง)</span>
+        </label>`;
+      }
+      return `<label class="check-item"><input type="checkbox" value="${e.equipment_id}" onchange="this.parentElement.classList.toggle('checked', this.checked)"> ${e.name}</label>`;
+    }).join('');
   } catch (e) {
     wrap.innerHTML = '<span style="color:var(--red);font-size:12px;">โหลดข้อมูลไม่สำเร็จ</span>';
   }
@@ -1396,7 +1389,7 @@ async function submitBooking() {
     if (document.getElementById('page-my-bookings').classList.contains('active')) loadMyBookings();
     if (document.getElementById('page-schedule').classList.contains('active')) loadSchedule();
     if (document.getElementById('page-maid').classList.contains('active')) loadMaidTasks();
-  } catch (e) { showToast('จองไม่สำเร็จ: ' + e.message, 'error'); }
+  } catch (e) { showToast(e.message || 'จองไม่สำเร็จ กรุณาลองใหม่', 'error'); }
 }
 
 // ─────────────────────────────────────────────
