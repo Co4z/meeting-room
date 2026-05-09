@@ -16,17 +16,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+import os
 
-# ─────────────────────────────────────────────
-#  DB CONFIG  — update password if needed
-# ─────────────────────────────────────────────
 DB_CONFIG = {
-    "host":     "localhost",
-    "user":     "root",
-    "password": "admin1234",  # เติมรหัสผ่าน AppServ ตรงนี้ถ้ามี
-    "database": "meeting_room_db",
+    "host":     os.environ.get('DB_HOST', 'localhost'), 
+    "port":     int(os.environ.get('DB_PORT', 4000)),
+    "user":     os.environ.get('DB_USER', 'root'),
+    "password": os.environ.get('DB_PASSWORD', ''), 
+    "database": os.environ.get('DB_DATABASE', 'test'),
     "charset":  "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,
+    "ssl":      {"ssl_verify_cert": True, "ssl_verify_identity": True}
 }
 
 def get_conn():
