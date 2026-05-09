@@ -23,7 +23,7 @@ from pydantic import BaseModel
 DB_CONFIG = {
     "host":     "localhost",
     "user":     "root",
-    "password": "",  # เติมรหัสผ่าน AppServ ตรงนี้ถ้ามี
+    "password": "admin1234",  # เติมรหัสผ่าน AppServ ตรงนี้ถ้ามี
     "database": "meeting_room_db",
     "charset":  "utf8mb4",
     "cursorclass": pymysql.cursors.DictCursor,
